@@ -38,8 +38,6 @@ export interface Message {
   content: string;
   timestamp: string;
   isMe: boolean;
-  seen: boolean;
-  seenAt?: string | null;
 }
 
 const ChatApp: React.FC = () => {
@@ -147,14 +145,12 @@ const ChatApp: React.FC = () => {
         senderId: msg.user._id,
         content: msg.message,
         timestamp: msg.createdAt,
-        isMe: msg.user._id === user?._id,
-        seen: msg.seen,
-        seenAt: msg.seenAt
+        isMe: msg.user._id === user?._id
       }));
       
       setMessages(transformedMessages);
       
-      // Mark messages as seen for the current user
+      // Mark conversation as seen for the current user
       if (user?._id) {
         await markMessagesAsSeen(conversationId, user._id);
       }
@@ -229,9 +225,7 @@ const ChatApp: React.FC = () => {
           senderId: user._id,
           content: content,
           timestamp: new Date().toISOString(),
-          isMe: true,
-          seen: false,
-          seenAt: undefined
+          isMe: true
         };
         setMessages(prevMessages => [...prevMessages, newMessage]);
       }
@@ -363,9 +357,7 @@ const ChatApp: React.FC = () => {
                 senderId: data.senderId,
                 content: data.message,
                 timestamp: new Date().toISOString(),
-                isMe: false,
-                seen: false,
-                seenAt: undefined
+                isMe: false
               };
               setMessages(prevMessages => [...prevMessages, newMessage]);
               
@@ -404,9 +396,7 @@ const ChatApp: React.FC = () => {
                 senderId: data.senderId,
                 content: data.message,
                 timestamp: new Date().toISOString(),
-                isMe: false,
-                seen: false,
-                seenAt: undefined
+                isMe: false
               }];
             });
           } else {

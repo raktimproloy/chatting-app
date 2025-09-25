@@ -187,6 +187,11 @@ export interface ConversationUserData {
   lastMessageTime?: string;
   lastMessageSenderId?: string;
   isLastMessageFromCurrentUser?: boolean;
+  hasSeen?: boolean;
+  notSeenBy?: Array<{
+    userId: string;
+    lastSeenAt: string;
+  }>;
 }
 
 /**
@@ -222,8 +227,6 @@ export interface MessageResponse {
   };
   message: string;
   createdAt: string;
-  seen: boolean;
-  seenAt: string | null;
   _id: string;
 }
 
