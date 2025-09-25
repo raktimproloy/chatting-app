@@ -2,7 +2,7 @@
 import React, {useEffect, useMemo, useState, useCallback} from 'react'
 
 interface PeerContextType {
-    peer: RTCPeerConnection;
+    peer: RTCPeerConnection | null;
     createOffer: () => Promise<RTCSessionDescriptionInit>;
     createAnswer: (offer: RTCSessionDescriptionInit) => Promise<RTCSessionDescriptionInit>;
     setRemoteAns: (ans: RTCSessionDescriptionInit) => Promise<void>;
@@ -26,25 +26,37 @@ interface PeerProviderProps {
 
 export const PeerProvider: React.FC<PeerProviderProps> = ({children}) => {
     const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
-    const peer = useMemo(() => new RTCPeerConnection({
-        iceServers:[
-            {
-                urls:[
-                    'stun:stun.l.google.com:19302',
-                    'stun:global.stun.twilio.com:3478'
-                ]
-            }
-        ]
-    }), [])
+    const peer = useMemo(() => {
+        // Only create RTCPeerConnection in browser environment
+        if (typeof window === 'undefined') {
+            return null;
+        }
+        return new RTCPeerConnection({
+            iceServers:[
+                {
+                    urls:[
+                        'stun:stun.l.google.com:19302',
+                        'stun:global.stun.twilio.com:3478'
+                    ]
+                }
+            ]
+        });
+    }, [])
     
 
     const createOffer = async() => {
+        if (!peer) {
+            throw new Error('RTCPeerConnection not available');
+        }
         const offer = await peer.createOffer()
         await peer.setLocalDescription(offer)
         return offer
     }
 
     const createAnswer = async(offer: RTCSessionDescriptionInit) => {
+        if (!peer) {
+            throw new Error('RTCPeerConnection not available');
+        }
         await peer.setRemoteDescription(offer)
         const answer = await peer.createAnswer()
         await peer.setLocalDescription(answer)
@@ -52,10 +64,16 @@ export const PeerProvider: React.FC<PeerProviderProps> = ({children}) => {
     }
 
     const setRemoteAns = async(ans: RTCSessionDescriptionInit) => {
+        if (!peer) {
+            throw new Error('RTCPeerConnection not available');
+        }
         await peer.setRemoteDescription(ans)
     }
 
     const sendStream = async(stream: MediaStream) => {
+        if (!peer) {
+            throw new Error('RTCPeerConnection not available');
+        }
         const tracks = stream.getTracks()
         for(const track of tracks) {
             // Check if track already exists before adding
@@ -75,6 +93,8 @@ export const PeerProvider: React.FC<PeerProviderProps> = ({children}) => {
 
 
     useEffect(() => {
+        if (!peer) return;
+        
         peer.addEventListener('track', handleTrackEvent)
         
         return () => {

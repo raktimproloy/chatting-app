@@ -121,14 +121,16 @@ export default function VideoPage({id}: VideoPageProps) {
       }
   }, [myStream, remoteStream])
 
-  const handleNegotiationNeededEvent = useCallback(async () => {
-      if (remoteEmail && socket) {
+  const handleNegotiationNeededEvent = useCallback(async () => {        
+      if (remoteEmail && socket && peer) {
           const localOffer = peer.localDescription;
           socket.emit('call-user', {emailId: remoteEmail, offer: localOffer})
       }
   }, [remoteEmail, socket, peer])
 
   useEffect(() => {
+      if (!peer) return;
+      
       peer.addEventListener('negotiationneeded', handleNegotiationNeededEvent)
       return () => {
           peer.removeEventListener('negotiationneeded', handleNegotiationNeededEvent)
