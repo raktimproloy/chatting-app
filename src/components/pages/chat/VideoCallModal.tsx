@@ -50,30 +50,34 @@ export default function VideoCallModal({ isOpen, onClose, roomId, remoteUserId }
   const [isConnecting, setIsConnecting] = useState(false);
   const [callStatus, setCallStatus] = useState<'idle' | 'connecting' | 'connected' | 'disconnected'>('idle');
 
-  const handleNewUserJoined = useCallback(async (data: {phone: string}) => {
-    const {phone} = data;
+  const handleNewUserJoined = useCallback(async (data: {userId: string}) => {
+    const {userId} = data;
     console.log("New user joined", data);
-    setRemotePhone(phone)
+    setRemotePhone(userId)
     
     if (myStream) {
+      console.log('Sending my stream to remote user');
       sendStream(myStream)
     }
     
+    console.log('Creating offer for remote user');
     const offer = await createOffer();
-    socket?.emit('call-user', {phone, offer})
+    socket?.emit('call-user', {phoneId: userId, offer})
   }, [socket, createOffer, myStream, sendStream])
 
   const handleIncommingCall = useCallback(async (data: {from: string, offer: RTCSessionDescriptionInit}) => {
     const {from, offer} = data;
-    console.log("Incomming call from", from);
+    console.log("Incoming call from", from);
     setRemotePhone(from)
     
     if (myStream) {
+      console.log('Sending my stream in response to incoming call');
       sendStream(myStream)
     }
     
+    console.log('Creating answer for incoming call');
     const ans = await createAnswer(offer)
-    socket?.emit('call-accpeted', {phoneId: from, ans})
+    socket?.emit('call-accepted', {phoneId: from, ans})
   }, [socket, createAnswer, myStream, sendStream])
 
   const handleCallAccepted = useCallback(async (data: {ans: RTCSessionDescriptionInit}) => {
@@ -83,6 +87,7 @@ export default function VideoCallModal({ isOpen, onClose, roomId, remoteUserId }
     setIsCallActive(true);
     setCallStatus('connected');
     setIsConnecting(false);
+    console.log('Call connection established');
   }, [setRemoteAns])
 
   // Video control functions
@@ -173,14 +178,14 @@ export default function VideoCallModal({ isOpen, onClose, roomId, remoteUserId }
     if (socket) {
       socket.on('user-joined', handleNewUserJoined)
       socket.on('incomming-call', handleIncommingCall)
-      socket.on('call-accpeted', handleCallAccepted)
+      socket.on('call-accepted', handleCallAccepted)
     }
 
     return () => {
       if (socket) {
         socket.off('user-joined', handleNewUserJoined)
         socket.off('incomming-call', handleIncommingCall)
-        socket.off('call-accpeted', handleCallAccepted)
+        socket.off('call-accepted', handleCallAccepted)
       }
     }
   }, [socket, handleNewUserJoined, handleIncommingCall, handleCallAccepted])
@@ -188,6 +193,14 @@ export default function VideoCallModal({ isOpen, onClose, roomId, remoteUserId }
   useEffect(() => {
     if (isOpen) {
       getUserMediaStream()
+      
+      // Join the room when modal opens
+      if (socket && user?._id && roomId) {
+        console.log('Joining room:', { roomId, phoneId: user._id });
+        socket.emit('join-room', { roomId, phoneId: user._id });
+        setIsConnecting(true);
+        setCallStatus('connecting');
+      }
     } else {
       // Clean up when modal closes
       if (myStream) {
@@ -199,16 +212,25 @@ export default function VideoCallModal({ isOpen, onClose, roomId, remoteUserId }
       setCallStatus('idle');
       setIsConnecting(false);
     }
-  }, [isOpen, getUserMediaStream, myStream])
+  }, [isOpen, getUserMediaStream, myStream, socket, user?._id, roomId])
 
   useEffect(() => {
     if (videoRef.current && myStream) {
       videoRef.current.srcObject = myStream;
     }
     if (remoteVideoRef.current && remoteStream) {
+      console.log('Setting remote video stream:', remoteStream);
       remoteVideoRef.current.srcObject = remoteStream;
     }
   }, [myStream, remoteStream])
+
+  // Debug remote stream changes
+  useEffect(() => {
+    console.log('Remote stream changed:', remoteStream);
+    if (remoteStream) {
+      console.log('Remote stream tracks:', remoteStream.getTracks());
+    }
+  }, [remoteStream])
 
   if (!isOpen) return null;
 

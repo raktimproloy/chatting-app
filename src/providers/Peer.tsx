@@ -87,8 +87,13 @@ export const PeerProvider: React.FC<PeerProviderProps> = ({children}) => {
     }
 
     const handleTrackEvent = useCallback((event: RTCTrackEvent) => {
+        console.log('Track event received:', event);
         const streams = event.streams;
-        setRemoteStream(streams[0])
+        console.log('Remote streams:', streams);
+        if (streams && streams.length > 0) {
+            console.log('Setting remote stream:', streams[0]);
+            setRemoteStream(streams[0])
+        }
     }, [])
 
 
