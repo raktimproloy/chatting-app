@@ -10,7 +10,6 @@ interface ChatListProps {
 }
 
 const ChatList: React.FC<ChatListProps> = ({ users, onUserSelect, selectedUser, onlineUsers }) => {
-  console.log("chat Users", users)
   return (
     <div className="overflow-y-auto">
       <div className="p-4">

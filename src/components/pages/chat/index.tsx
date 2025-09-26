@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react';
 import ChatList from './ChatList';
 import UserList from './UserList';
 import ChatWindow from './ChatWindow';
+import IncomingCallModal from './IncomingCallModal';
+import VideoCallModal from './VideoCallModal';
 import { useAuth } from '@/contexts/AuthContext';
 import { 
   getAllUsers, 
@@ -44,6 +46,20 @@ const ChatApp: React.FC = () => {
   const [selectedUser, setSelectedUser] = useState<ChatUser | null>(null);
   const [activeView, setActiveView] = useState<'chats' | 'users'>('chats');
   const { user } = useAuth();
+  
+  // Incoming call state
+  const [incomingCall, setIncomingCall] = useState<{
+    senderId: string;
+    receiverId: string;
+    conversationId: string;
+    roomId: string;
+  } | null>(null);
+  const [showIncomingCallModal, setShowIncomingCallModal] = useState(false);
+  
+  // Video call state
+  const [isVideoCallOpen, setIsVideoCallOpen] = useState(false);
+  const [videoCallRoomId, setVideoCallRoomId] = useState<string>('');
+  const [videoCallRemoteUserId, setVideoCallRemoteUserId] = useState<string>('');
 
   // Utility function to calculate time ago
   const getTimeAgo = (timestamp: string): string => {
@@ -268,6 +284,53 @@ const ChatApp: React.FC = () => {
     });
   };
 
+  // Handle incoming call acceptance
+  const handleAcceptCall = () => {
+    if (!incomingCall || !socket) return;
+    
+    console.log("Accepting call:", incomingCall);
+    
+    // Close the incoming call modal
+    setShowIncomingCallModal(false);
+    
+    // Find the caller in the users list and select them
+    const caller = allUsers.find(u => u.userId === incomingCall.senderId);
+    if (caller) {
+      const callerUser: ChatUser = {
+        id: caller.userId,
+        name: caller.user.fullname,
+        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(caller.user.fullname)}&background=6366f1&color=ffffff`,
+        status: 'online',
+        phone: caller.user.phone,
+        conversationId: incomingCall.conversationId
+      };
+      setSelectedUser(callerUser);
+    }
+    
+    // Set up video call parameters
+    setVideoCallRoomId(incomingCall.roomId);
+    setVideoCallRemoteUserId(incomingCall.senderId);
+    
+    // Open the video call modal
+    setIsVideoCallOpen(true);
+    
+    console.log("Call accepted, opening video call with roomId:", incomingCall.roomId);
+    
+    // Clear the incoming call data
+    setIncomingCall(null);
+  };
+
+  // Handle incoming call rejection
+  const handleRejectCall = () => {
+    console.log("Rejecting call:", incomingCall);
+    
+    // Close the incoming call modal
+    setShowIncomingCallModal(false);
+    
+    // Clear the incoming call data
+    setIncomingCall(null);
+  };
+
   // Get chatted users (from conversations)
   const chattedUsers = transformToChatUsers(conversations);
   
@@ -407,10 +470,17 @@ const ChatApp: React.FC = () => {
         }
       })
 
+      socket.on("requestingForAcceptingVideoCall", (data) => {
+        console.log("Requesting Video Call received:", data);
+        setIncomingCall(data);
+        setShowIncomingCallModal(true);
+      })
+
       // Cleanup event listeners when dependencies change
       return () => {
         socket.off("getUsers");
         socket.off("getMessage");
+        socket.off("requestingForAcceptingVideoCall");
       };
     }
   }, [socket, user?._id]);
@@ -541,6 +611,22 @@ const ChatApp: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Incoming Call Modal */}
+      <IncomingCallModal
+        isOpen={showIncomingCallModal}
+        callerInfo={incomingCall}
+        onAccept={handleAcceptCall}
+        onReject={handleRejectCall}
+      />
+
+      {/* Video Call Modal */}
+      <VideoCallModal
+        isOpen={isVideoCallOpen}
+        onClose={() => setIsVideoCallOpen(false)}
+        roomId={videoCallRoomId}
+        remoteUserId={videoCallRemoteUserId}
+      />
     </div>
   );
 };
