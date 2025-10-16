@@ -212,7 +212,8 @@ export default function VideoCallModal({ isOpen, onClose, roomId, remoteUserId }
       setCallStatus('idle');
       setIsConnecting(false);
     }
-  }, [isOpen, getUserMediaStream, myStream, socket, user?._id, roomId])
+  // }, [isOpen, getUserMediaStream, myStream, socket, user?._id, roomId])
+  }, [isOpen])
 
   useEffect(() => {
     if (videoRef.current && myStream) {
