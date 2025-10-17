@@ -36,9 +36,16 @@ export default function VideoCallModal({ isOpen, onClose, roomId, remoteUserId }
 
   const {socket} = useSocket();
   const [myStream, setMyStream] = useState<MediaStream | null>(null);
-  const {peer, createOffer, createAnswer, setRemoteAns, sendStream, remoteStream} = usePeer();
+  const {peer, createOffer, createAnswer, setRemoteAns, sendStream, remoteStream, addIceCandidate} = usePeer();
   const videoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  // signaling guards
+  const hasSentOfferRef = useRef(false);
+  const hasRemoteOfferRef = useRef(false);
+  const hasAppliedAnswerRef = useRef(false);
+  const lastOfferSdpRef = useRef<string | null>(null);
+  const hasAnsweredRef = useRef(false);
+  const hasSentStreamOnceRef = useRef(false);
 
   const [remotePhone, setRemotePhone] = useState<string | null>(null);
   const [mediaError, setMediaError] = useState<string | null>(null);
@@ -60,15 +67,33 @@ export default function VideoCallModal({ isOpen, onClose, roomId, remoteUserId }
       sendStream(myStream)
     }
     
-    console.log('Creating offer for remote user');
-    const offer = await createOffer();
-    socket?.emit('call-user', {phoneId: userId, offer})
-  }, [socket, createOffer, myStream, sendStream])
+    // Only create offer if we haven't already and there is no remote offer
+    if (!hasSentOfferRef.current && !hasRemoteOfferRef.current && peer?.signalingState === 'stable') {
+      console.log('Creating offer for remote user');
+      const offer = await createOffer();
+      hasSentOfferRef.current = true;
+      socket?.emit('call-user', {phoneId: userId, offer})
+    } else {
+      console.log('Skipped creating offer (already sent or remote offer present)', {
+        hasSentOffer: hasSentOfferRef.current,
+        hasRemoteOffer: hasRemoteOfferRef.current,
+        state: peer?.signalingState
+      })
+    }
+  }, [socket, createOffer, myStream, sendStream, peer])
 
   const handleIncommingCall = useCallback(async (data: {from: string, offer: RTCSessionDescriptionInit}) => {
     const {from, offer} = data;
     console.log("Incoming call from", from);
     setRemotePhone(from)
+    hasRemoteOfferRef.current = true;
+
+    // Deduplicate same offer SDP or repeated events
+    if (offer && (lastOfferSdpRef.current === (offer as any).sdp)) {
+      console.log('Duplicate offer SDP received, skipping');
+      return;
+    }
+    lastOfferSdpRef.current = (offer as any)?.sdp || null;
     
     if (myStream) {
       console.log('Sending my stream in response to incoming call');
@@ -76,19 +101,37 @@ export default function VideoCallModal({ isOpen, onClose, roomId, remoteUserId }
     }
     
     console.log('Creating answer for incoming call');
+    // Basic guard against wrong state and duplicates
+    if (peer && (peer.signalingState === 'stable') && peer.currentRemoteDescription) {
+      console.log('Already stable with remoteDescription, skipping answer creation')
+      return;
+    }
+    if (hasAnsweredRef.current) {
+      console.log('Already answered once, skipping duplicate answer');
+      return;
+    }
     const ans = await createAnswer(offer)
-    socket?.emit('call-accepted', {phoneId: from, ans})
+    hasAnsweredRef.current = true;
+    // prefer existing app's event to avoid duplicates
+    socket?.emit('call-accepted', {phoneId: from, answer: ans})
   }, [socket, createAnswer, myStream, sendStream])
 
-  const handleCallAccepted = useCallback(async (data: {ans: RTCSessionDescriptionInit}) => {
-    const {ans} = data;
-    console.log("Call accepted", ans);
-    await setRemoteAns(ans)
+  const handleCallAccepted = useCallback(async (data: {answer: RTCSessionDescriptionInit}) => {
+    const {answer} = data;
+    console.log("Call accepted", answer, 'state:', peer?.signalingState);
+    // Guard against double-setting answer
+    if (!peer) return;
+    if (peer.currentRemoteDescription || hasAppliedAnswerRef.current) {
+      console.log('Skipping setRemoteAns: remoteDescription already set');
+    } else {
+      await setRemoteAns(answer)
+      hasAppliedAnswerRef.current = true;
+    }
     setIsCallActive(true);
     setCallStatus('connected');
     setIsConnecting(false);
     console.log('Call connection established');
-  }, [setRemoteAns])
+  }, [setRemoteAns, peer])
 
   // Video control functions
   const toggleMute = useCallback(() => {
@@ -110,6 +153,22 @@ export default function VideoCallModal({ isOpen, onClose, roomId, remoteUserId }
       setIsVideoEnabled(!isVideoEnabled);
     }
   }, [myStream, isVideoEnabled]);
+
+  const shareMyStream = useCallback(async () => {
+    if (!myStream) return;
+    try {
+      await sendStream(myStream);
+      // If we know the remote, initiate/refresh the offer so they receive our tracks
+      if (remotePhone) {
+        const offer = await createOffer();
+        socket?.emit('call-user', { phoneId: remotePhone, offer });
+        setIsConnecting(true);
+        setCallStatus('connecting');
+      }
+    } catch (e) {
+      console.error('Failed to share stream', e);
+    }
+  }, [myStream, sendStream, remotePhone, createOffer, socket]);
 
   const endCall = useCallback(() => {
     if (myStream) {
@@ -179,6 +238,16 @@ export default function VideoCallModal({ isOpen, onClose, roomId, remoteUserId }
       socket.on('user-joined', handleNewUserJoined)
       socket.on('incomming-call', handleIncommingCall)
       socket.on('call-accepted', handleCallAccepted)
+      socket.on('ice-candidate', async ({ from, candidate }) => {
+        console.log('Received ICE candidate from', from, candidate);
+        if (candidate) {
+          try {
+            await addIceCandidate(candidate)
+          } catch (e) {
+            console.error('Failed to add ICE candidate', e)
+          }
+        }
+      })
     }
 
     return () => {
@@ -186,6 +255,7 @@ export default function VideoCallModal({ isOpen, onClose, roomId, remoteUserId }
         socket.off('user-joined', handleNewUserJoined)
         socket.off('incomming-call', handleIncommingCall)
         socket.off('call-accepted', handleCallAccepted)
+        socket.off('ice-candidate')
       }
     }
   }, [socket, handleNewUserJoined, handleIncommingCall, handleCallAccepted])
@@ -201,6 +271,16 @@ export default function VideoCallModal({ isOpen, onClose, roomId, remoteUserId }
         setIsConnecting(true);
         setCallStatus('connecting');
       }
+
+      // Emit our ICE candidates
+      if (peer && socket && user?._id) {
+        peer.onicecandidate = (event) => {
+          if (event.candidate && remotePhone) {
+            console.log('Sending ICE candidate to', remotePhone, event.candidate);
+            socket.emit('ice-candidate', { toPhoneId: remotePhone, candidate: event.candidate });
+          }
+        }
+      }
     } else {
       // Clean up when modal closes
       if (myStream) {
@@ -214,6 +294,35 @@ export default function VideoCallModal({ isOpen, onClose, roomId, remoteUserId }
     }
   // }, [isOpen, getUserMediaStream, myStream, socket, user?._id, roomId])
   }, [isOpen])
+
+  // Direct-call when remoteUserId is known (mirror previous project behavior)
+  useEffect(() => {
+    const tryDirectStart = async () => {
+      if (!isOpen || !socket || !user?._id || !remoteUserId) return;
+      if (!myStream) return;
+      try {
+        setRemotePhone(remoteUserId);
+        await sendStream(myStream);
+        // Avoid double offer when we already have a remote offer/glare
+        if (!hasRemoteOfferRef.current && !hasSentOfferRef.current && peer?.signalingState === 'stable') {
+          const offer = await createOffer();
+          hasSentOfferRef.current = true;
+          socket.emit('call-user', { phoneId: remoteUserId, offer });
+          setIsConnecting(true);
+          setCallStatus('connecting');
+        } else {
+          console.log('Direct start skipped creating offer (glare/state guard)', {
+            hasRemoteOffer: hasRemoteOfferRef.current,
+            hasSentOffer: hasSentOfferRef.current,
+            state: peer?.signalingState
+          })
+        }
+      } catch (e) {
+        console.error('Direct start call failed', e);
+      }
+    };
+    tryDirectStart();
+  }, [isOpen, socket, user?._id, remoteUserId, myStream, sendStream, createOffer, peer])
 
   useEffect(() => {
     if (videoRef.current && myStream) {
@@ -230,8 +339,26 @@ export default function VideoCallModal({ isOpen, onClose, roomId, remoteUserId }
     console.log('Remote stream changed:', remoteStream);
     if (remoteStream) {
       console.log('Remote stream tracks:', remoteStream.getTracks());
+      // Mark call connected when remote media arrives
+      setIsCallActive(true);
+      setCallStatus('connected');
+      setIsConnecting(false);
     }
   }, [remoteStream])
+
+  // Auto-send local stream to remote once available
+  useEffect(() => {
+    const sendOnce = async () => {
+      if (!myStream || !remotePhone || hasSentStreamOnceRef.current) return;
+      try {
+        await sendStream(myStream);
+        hasSentStreamOnceRef.current = true;
+      } catch (e) {
+        console.error('Auto send stream failed', e);
+      }
+    }
+    sendOnce();
+  }, [myStream, remotePhone, sendStream])
 
   if (!isOpen) return null;
 
@@ -315,9 +442,7 @@ export default function VideoCallModal({ isOpen, onClose, roomId, remoteUserId }
                     <div className="w-24 h-24 bg-gray-700 rounded-full flex items-center justify-center mx-auto mb-4">
                       <FiUser className="w-12 h-12 text-gray-400" />
                     </div>
-                    <p className="text-gray-400 text-lg">
-                      {isConnecting ? 'Waiting for remote user...' : 'No remote video'}
-                    </p>
+                    <p className="text-gray-400 text-lg">No remote video</p>
                   </div>
                 </div>
               )}
@@ -395,6 +520,15 @@ export default function VideoCallModal({ isOpen, onClose, roomId, remoteUserId }
                 )}
               </button>
             )}
+
+            {/* Share Stream Button */}
+            <button
+              onClick={shareMyStream}
+              className="px-4 h-12 bg-blue-600 hover:bg-blue-700 rounded-full flex items-center justify-center text-white text-sm font-medium transition-all duration-200"
+              disabled={!myStream}
+            >
+              Send Stream
+            </button>
 
             {/* Settings Button */}
             <button
